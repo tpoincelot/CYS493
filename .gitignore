@@ -1,0 +1,4 @@
+.venv/
+ccsu_courses.json
+__pycache__/
+*.pyc
