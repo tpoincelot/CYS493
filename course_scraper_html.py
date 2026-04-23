@@ -1,31 +1,79 @@
 import json
 import re
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import concurrent.futures
 from urllib.robotparser import RobotFileParser
 from urllib.parse import urljoin
+import time
+import threading
+import logging
+
+# Configure logging for auditing and error-handling
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(threadName)s: %(message)s",
+    handlers=[
+        logging.FileHandler("crawler_audit.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
 BASE_URL = "https://ccsu.smartcatalogiq.com"
 USER_AGENT = "CourseScraperBot/1.0"
 HEADERS = {'User-Agent': USER_AGENT}
 
-# Initialize and read robots.txt
+# Configure automatic retries for recoverable errors
+http_session = requests.Session()
+retry_strategy = Retry(
+    total=5,  # Maximum number of retries
+    backoff_factor=1,  # Time between retries factor
+    status_forcelist=[408, 429, 500, 502, 503, 504],  # HTTP status codes
+    allowed_methods=["HEAD", "GET", "OPTIONS"]
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+http_session.mount("https://", adapter)
+http_session.mount("http://", adapter)
+
+# Read robots.txt
 rp = RobotFileParser()
 rp.set_url(urljoin(BASE_URL, "/robots.txt"))
 try:
     rp.read()
+    logging.info("Successfully read robots.txt")
 except Exception as e:
-    print(f"Warning: Could not read robots.txt: {e}")
+    logging.warning(f"Could not read robots.txt: {e}")
+
+# Get crawl delay from robots.txt or default to 0.1
+CRAWL_DELAY = rp.crawl_delay(USER_AGENT) or 0.1
+logging.info(f"Using crawl delay of {CRAWL_DELAY} seconds")
+last_request_time = 0.0
+request_lock = threading.Lock()
+
+def polite_request(url, timeout=15):
+    """Makes an HTTP GET request respecting the crawl delay across all threads."""
+    global last_request_time
+    with request_lock:
+        elapsed = time.time() - last_request_time
+        if elapsed < CRAWL_DELAY:
+            time.sleep(CRAWL_DELAY - elapsed)
+        # Update last_request_time before releasing lock
+        last_request_time = time.time()
+        
+    # Perform network request outside the lock so other threads aren't blocked from waiting
+    logging.debug(f"Fetching URL: {url}")
+    return http_session.get(url, headers=HEADERS, timeout=timeout)
 
 def get_latest_catalog_url():
     """Find the URL for the current/latest catalog year."""
     if not rp.can_fetch(USER_AGENT, BASE_URL):
-        print(f"Access to {BASE_URL} denied by robots.txt")
+        logging.warning(f"Access to {BASE_URL} denied by robots.txt")
         return BASE_URL + "/en/2024-2025/undergraduate-graduate-catalog"
 
     try:
-        resp = requests.get(BASE_URL, headers=HEADERS, timeout=10)
+        resp = polite_request(BASE_URL, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
         
@@ -33,22 +81,24 @@ def get_latest_catalog_url():
         for a in soup.find_all('a'):
             href = a.get('href') or ''
             if re.search(r'/en/\d{4}-\d{4}/[a-z-]+-catalog$', href, re.IGNORECASE):
+                logging.info(f"Found latest catalog URL: {BASE_URL + href}")
                 return BASE_URL + href
     except Exception as e:
-        print(f"Error fetching base catalog URL: {e}")
+        logging.error(f"Error fetching base catalog URL: {e}", exc_info=True)
         
-    # Fallback default if extraction fails
+    # Fallback default
+    logging.info("Using fallback default catalog URL")
     return BASE_URL + "/en/2024-2025/undergraduate-graduate-catalog"
 
 def fetch_subject_courses(subj_url):
     """Fetch all courses listed on a specific subject page."""
     courses = []
     if not rp.can_fetch(USER_AGENT, subj_url):
-        print(f"Access to {subj_url} denied by robots.txt")
+        logging.warning(f"Access to {subj_url} denied by robots.txt")
         return courses
 
     try:
-        resp = requests.get(subj_url, headers=HEADERS, timeout=15)
+        resp = polite_request(subj_url, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
         
@@ -87,22 +137,28 @@ def fetch_subject_courses(subj_url):
                     "description": "",
                     "url": BASE_URL + href
                 })
+        logging.info(f"Successfully scraped {len(courses)} courses from {subj_url}")
     except Exception as e:
-        print(f"Error fetching {subj_url}: {e}")
+        logging.error(f"Error fetching {subj_url}: {e}", exc_info=True)
         
     return courses
 
 def parse_courses_html():
     catalog_url = get_latest_catalog_url()
     courses_url = catalog_url + "/all-courses"
-    print(f"Fetching catalog from: {courses_url}")
+    logging.info(f"Fetching catalog from: {courses_url}")
     
     if not rp.can_fetch(USER_AGENT, courses_url):
-        print(f"Access to {courses_url} denied by robots.txt")
+        logging.warning(f"Access to {courses_url} denied by robots.txt")
         return []
     
-    resp = requests.get(courses_url, headers=HEADERS, timeout=15)
-    resp.raise_for_status()
+    try:
+        resp = polite_request(courses_url, timeout=15)
+        resp.raise_for_status()
+    except Exception as e:
+        logging.error(f"Error fetching all courses page {courses_url}: {e}", exc_info=True)
+        return []
+
     soup = BeautifulSoup(resp.text, 'html.parser')
     
     courses_path = courses_url.replace(BASE_URL, "")
@@ -116,7 +172,7 @@ def parse_courses_html():
             subject_links.add(BASE_URL + href)
             
     subject_links = list(subject_links)
-    print(f"Found {len(subject_links)} subjects. Fetching course links...")
+    logging.info(f"Found {len(subject_links)} subjects. Fetching course links...")
 
     all_courses = []
     
@@ -132,7 +188,7 @@ def parse_courses_html():
     return list(unique_courses)
 
 def scrape(output_json=None):
-    print("Scraping courses from HTML...")
+    logging.info("Scraping courses from HTML...")
     parsed = parse_courses_html()
     
     if output_json:
@@ -144,6 +200,6 @@ def scrape(output_json=None):
 if __name__ == "__main__":
     try:
         courses = scrape("ccsu_courses_html.json")
-        print(f"Scraped {len(courses)} courses and wrote ccsu_courses_html.json")
+        logging.info(f"Scraped {len(courses)} courses and wrote ccsu_courses_html.json")
     except Exception as e:
-        print("Error scraping courses:", e)
+        logging.error("Critical error scraping courses:", exc_info=True)
