@@ -1,0 +1,7 @@
+.venv/
+ccsu_courses.json
+ccsu_courses_html.json
+crawler_audit.log
+__pycache__/
+*.pyc
+course_scraper.py

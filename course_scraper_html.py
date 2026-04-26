@@ -198,6 +198,7 @@ def scrape(output_json=None):
     init_db()
     save_courses(parsed)
 
+    
     if output_json:
         with open(output_json, "w", encoding="utf-8") as f:
             json.dump(parsed, f, ensure_ascii=False, indent=2)
