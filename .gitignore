@@ -5,3 +5,4 @@ crawler_audit.log
 __pycache__/
 *.pyc
 course_scraper.py
+courses.db
