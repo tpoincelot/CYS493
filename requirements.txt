@@ -2,7 +2,6 @@ beautifulsoup4==4.14.3
 bs4==0.0.2
 certifi==2026.2.25
 charset-normalizer==3.4.6
--e git+https://github.com/tpoincelot/CYS493@bad727af74172cfc20609158657df83b0f3ecb58#egg=CYS493
 idna==3.11
 iniconfig==2.3.0
 packaging==26.0
