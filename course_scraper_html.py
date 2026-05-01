@@ -1,3 +1,7 @@
+# Project: CourseScraper
+# Authors: Thomas Poincelot & Weronika Poczynek
+# Description: Handles the web crawling and HTML parsing logic.
+
 import json
 import re
 import requests

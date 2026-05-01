@@ -1,3 +1,6 @@
+# Author: Weronika Poczynek
+# Description: SQLite database management and data persistence.
+
 import sqlite3
 
 # name of the database file that will be created locally

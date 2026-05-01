@@ -1,3 +1,6 @@
+# Authors: Thomas Poincelot & Weronika Poczynek
+# Description: Provides a simple GUI for administrators to run the scraper, view stored courses, and manage the database.
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
